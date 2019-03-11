@@ -1,0 +1,165 @@
+/* file: proCLogin.pgc
+ * modified: 6/1/2008  11:00p
+ * login-related functions
+ */
+
+
+
+//==================================================================
+// FUNCTION LIST
+//    int change_password(const char *mstsLname, const char *mstsOldPasswd, 
+//        const char *mstsNewPasswd)
+//    int do_login(const char *mstsLname, const char *mstsPasswd)
+//    int do_logout(const char *mstsLname)
+//    int is_logged_in(const char *mstsLname)
+//==================================================================    
+
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "callProcsViaC.h"
+
+
+extern FILE *fp;
+extern pthread_mutex_t global_db_mutex;
+
+
+//===============================================================================
+// change the password for a user
+// returns: 1 for success
+//          0 for no such logname
+//          -1 for system error
+//===============================================================================
+
+int change_password(const char *mstsLname, const char *mstsOldPasswd, const char *mstsNewPasswd)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLname;
+  const char *mstsOldPassword = mstsOldPasswd;
+  const char *mstsNewPassword = mstsNewPasswd;
+  int success;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT ms_changepassword(:mstsLogname, :mstsOldPassword, :mstsNewPassword)
+    INTO :success;
+
+  disconnect_from_postgresql();
+ 
+  return success;  // 0 if no such login; 1 if OK
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;       // 'not found'
+}
+
+
+//===============================================================================
+// log a user in to the msts system
+// returns: 3 for logged in but not to any case
+//          2 for already logged in to this case
+//          1 for good new log in
+//         -1 for system error
+//         -2 for bad logname, password pair
+//         -XXXX for can't log in; already logged in to case XXXX
+//===============================================================================
+
+int do_login(const char *mstsLname, const char *mstsPasswd, int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLname;
+  const char *mstsPassword = mstsPasswd;
+  int mstsCaseID = mstsCID;
+  int mstsLoginStatus = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  connect_to_postgresql();
+
+  /* CRITICAL REGION */	
+  EXEC SQL
+    SELECT ms_login(:mstsLogname, :mstsPassword, :mstsCaseID)
+    INTO :mstsLoginStatus;
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql(); 
+
+  return mstsLoginStatus;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;      
+}
+
+
+//===============================================================================
+// log a user out of the msts system
+// return 1 for successful log out
+//        0 for not logged in
+//       -1 for system error
+//===============================================================================
+
+int do_logout(const char *mstsLname)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLname;
+  int mstsLogoutStatus = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  connect_to_postgresql();
+
+  /* CRITICAL REGION */
+  EXEC SQL
+    SELECT ms_logout(:mstsLogname)
+    INTO :mstsLogoutStatus;
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql(); 
+
+  return mstsLogoutStatus;  
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;     
+}
+
+
+//===============================================================================
+// find out if a user is logged in
+// returns case ID if logged in
+//         0 for not logged in
+//        -1 for system error
+//===============================================================================
+
+int is_logged_in(const char *mstsLname)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLname;
+  int mstsLoginStatus = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  connect_to_postgresql();
+
+  EXEC SQL
+    SELECT ms_isloggedin(:mstsLogname)
+    INTO :mstsLoginStatus;
+
+  disconnect_from_postgresql(); 
+
+  return mstsLoginStatus; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1; 
+}

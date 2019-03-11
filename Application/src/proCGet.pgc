@@ -1,0 +1,1804 @@
+/* file: proCGet.pgc
+ * modified: 6/1/2008  10:30p
+ * functions that retrieve values from dB
+ */
+
+ 
+
+//==================================================================
+// FUNCTION LIST
+//    int get_account_list(int mstsCID, void(*sendTuple)(ms_littleaccount_tuple))
+//    void get_attendance_list(int mstsMID, void(*sendTuple)(ms_attendance_tuple))
+//    void get_case_available_list_by_caseID(int mstsCID, void(*sendTuple)(ms_caseavailablelist_tuple))
+//    void get_case_available_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_caseavailablelist_tuple))
+//    void get_case_document_list(int mstsCID, void(*sendTuple)(ms_casedoclist_tuple))
+//    void get_case_meeting_list(int mstsCID, void(*sendTuple)(ms_meeting_tuple))
+//    void get_case_role_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_accountcaserole_tuple))
+//    ms_casestatus_tuple get_Case_Status_By_ID(int mstsCID)
+//    ms_casetitle_tuple get_Case_Title_By_ID(int mstsCID)
+//    void get_doc_access_list_by_doc_ID(int mstsDID, void(*sendTuple)(ms_docaccess_tuple))
+//    void get_doc_access_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_docaccess_tuple))
+//    ms_meetingdocpair_tuple get_doc_ID_by_meeting_ID(int mstsMeetID)
+//    ms_initialfinaldocid_tuple get_initial_and_final_doc_ID(int mstsCID);
+//    void get_involved_in_case(int mstsCID, void(*sendTuple)(ms_involvedincase_tuple))
+//    ms_meeting_tuple get_meeting(int mstsMID)
+//    void get_message_received_list(const char *mstsRecip, void(*sendTuple)(ms_messagereceivedlist_tuple))
+//    ms_messagesentrecipient_tuple get_message_sent_recipient_list(const char *mstsSendr, void(*sendTuple)(ms_messagesentrecipient_tuple))
+//    ms_getrole_tuple get_role(const char *mstsLognm, int mstsCID)
+//    void get_signature_list_by_doc_ID_version(int mstsDID, int mstsVersn, void(*sendTuple)(ms_signature_tuple))
+//    void get_signed_version_list(const char *mstsLognam, int mstsDID, void(*sendTuple)(ms_signature_tuple))
+//    ms_messagereceived_tuple read_message_received(int mstsMessID, const char *mstsReadr)
+//    ms_messagesent_tuple read_message_sent(int mstsMessID, const char *mstsReadr)
+//    ms_account_tuple retrieve_account(const char *mstsLognm)
+//    ms_docversion_tuple retrieve_doc_for_edit(int mstsDID)
+//    ms_docversion_tuple retrieve_doc_read_only(int mstsDID, int mstsVersn)
+//    ms_initialfinaldoc_tuple retrieve_initial_and_final_doc(int mstsCaseNum)
+//==================================================================
+
+
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+
+#include "callProcsViaC.h"
+
+
+extern FILE *fp;
+extern pthread_mutex_t global_db_mutex;
+
+
+//================================================================
+// get a list of non-mediator account names associated with a given case ID
+//   and no other
+// returns: number of accounts in list
+//================================================================
+
+int get_account_list(int mstsCID, void(*sendTuple)(ms_littleaccount_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) caseID variable
+  char lognam[LOG_NAME_LEN]; 
+  int success;
+  short lognam_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_littleaccount_tuple retval;
+  int count = 0;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_15 CURSOR FOR
+    SELECT ACR1.logname, 1
+    FROM ms_accountcaserole ACR1
+    WHERE ACR1.caseID = :mstsCaseID AND
+          ACR1.role <> 'Mediator' AND
+          ACR1.logname NOT IN          -- logname not involved in any other case
+            (SELECT ACR2.logname
+             FROM ms_accountcaserole ACR2
+             WHERE ACR2.caseID <> :mstsCaseID);
+
+  EXEC SQL OPEN curs_15;
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_15 INTO :lognam:lognam_ind, :success:success_ind;
+
+    ++count;
+
+    strcpy(retval.lognam, lognam);
+    retval.success = success;
+
+    sendTuple(retval);
+
+  } while (lognam_ind == 0);
+
+  EXEC SQL CLOSE curs_15;
+
+  disconnect_from_postgresql();
+
+  return count;
+
+notfound:
+  EXEC SQL CLOSE curs_15;
+
+  disconnect_from_postgresql();
+
+  return count;
+}
+
+
+//==================================================================
+// get meetingID, logname, and present (y/n)
+// for each attendance associated with a given meeting
+//==================================================================
+
+void get_attendance_list(int mstsMID, void(*sendTuple)(ms_attendance_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMID;            // DECLARE the (input) meeting ID variable
+  int mID;
+  char lognam[LOG_NAME_LEN];
+  char presnt;    // (y/n)
+  int success;
+  short mID_ind;
+  short lognam_ind;
+  short presnt_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_6 CURSOR FOR
+    SELECT meetingID, logname, present, 1
+    FROM ms_attendance
+    WHERE meetingID = :mstsMeetingID
+    ORDER BY logname;
+
+  EXEC SQL OPEN curs_6;  
+
+  ms_attendance_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_6 INTO :mID:mID_ind, :lognam:lognam_ind, :presnt:presnt_ind, 
+          :success:success_ind;
+    retval_tuple.mID = mID;
+    strcpy(retval_tuple.lognam, lognam);
+    retval_tuple.presnt = presnt;
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (mID_ind == 0);
+
+  EXEC SQL CLOSE curs_6;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_6;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// get caseID, logname, availability start, and availability end
+// for each availability of anyone involved in a given case
+//=========================================================================================
+
+void get_case_available_list_by_caseID(int mstsCID, void(*sendTuple)(ms_caseavailablelist_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  int casID;
+  char lognam[LOG_NAME_LEN];
+  char avlStart[DATE_LEN];
+  char avlEnd[DATE_LEN];
+  int success;
+  short casID_ind;
+  short lognam_ind;
+  short avlStart_ind;
+  short avlEnd_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_3 CURSOR FOR
+    SELECT caseID, logname, availStart, availEnd, 1
+    FROM ms_available
+    WHERE caseID = :mstsCaseID
+    ORDER BY caseID, logname, availStart;
+
+  EXEC SQL OPEN curs_3;
+
+  ms_caseavailablelist_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_3 INTO :casID:casID_ind, :lognam:lognam_ind, :avlStart:avlStart_ind, :avlEnd:avlEnd_ind,
+                                         :success:success_ind;
+    retval_tuple.casID = casID;
+    strcpy(retval_tuple.lognam, lognam);
+    strcpy(retval_tuple.avlStart, avlStart);
+    strcpy(retval_tuple.avlEnd, avlEnd);
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (casID_ind == 0);
+
+  EXEC SQL CLOSE curs_3;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_3;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// get caseID, logname, availability start, and availability end
+// for each availability of a given person (for a given case)
+//=========================================================================================
+
+void get_case_available_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_caseavailablelist_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int casID;
+  char mstsLogname[LOG_NAME_LEN];   // declare the (input) logname variable
+  char lognam[LOG_NAME_LEN];
+  char avlStart[DATE_LEN];
+  char avlEnd[DATE_LEN];
+  int success;
+  short casID_ind;
+  short lognam_ind;
+  short avlStart_ind;
+  short avlEnd_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  strcpy(mstsLogname, mstsLognam);
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_4 CURSOR FOR
+    SELECT caseID, logname, availStart, availEnd, 1
+    FROM ms_available
+    WHERE logname = :mstsLogname
+    ORDER BY caseID, logname, availStart;
+
+  EXEC SQL OPEN curs_4;
+
+  ms_caseavailablelist_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_4 INTO :casID:casID_ind, :lognam:lognam_ind, :avlStart:avlStart_ind, :avlEnd:avlEnd_ind,
+                                         :success:success_ind;
+    retval_tuple.casID = casID;
+    strcpy(retval_tuple.lognam, lognam);
+    strcpy(retval_tuple.avlStart, avlStart);
+    strcpy(retval_tuple.avlEnd, avlEnd);
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (casID_ind == 0);
+
+  EXEC SQL CLOSE curs_4;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_4;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//==================================================================
+// get docID, type, title, docOut, and number of versions
+// for each document associated with a given case
+//==================================================================
+
+void get_case_document_list(int mstsCID, void(*sendTuple)(ms_casedoclist_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  int dID;
+  char typ[DOC_TYPE_LEN];
+  char titl[DOC_TITLE_LEN];
+  char dout;
+  int vcount;
+  int success;
+  short dID_ind;
+  short typ_ind;
+  short titl_ind;
+  short dout_ind;
+  short vcount_ind;
+  short success_ind;
+  char dummy[40];
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_2 CURSOR FOR
+    SELECT D.docID, D.type, D.title, D.docOut, MAX(DV.version), 1
+    FROM ms_document D, ms_docversion DV
+    WHERE D.caseID = :mstsCaseID AND
+          D.docID = DV.docID
+    GROUP BY D.docID, D.type, D.title, D.docOut
+    ORDER BY D.docID;
+
+  EXEC SQL OPEN curs_2;  
+
+  ms_casedoclist_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_2 INTO :dID:dID_ind, :typ:typ_ind, :titl:titl_ind, :dout:dout_ind, 
+          :vcount:vcount_ind, :success:success_ind;
+    retval_tuple.dID = dID;
+    strcpy(retval_tuple.typ, typ);
+    strcpy(retval_tuple.titl, titl);
+    retval_tuple.dout = dout;
+    retval_tuple.vcount = vcount;
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (dID_ind == 0);          // while we're getting data
+
+  EXEC SQL CLOSE curs_2;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_2;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//==================================================================
+// get meetingID, caseID, meetingStart, meetingEnd, meetingStatus
+// for each meeting associated with a given case
+//==================================================================
+
+void get_case_meeting_list(int mstsCID, void(*sendTuple)(ms_meeting_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  int cID;
+  int mID;
+  char meetStart[DATE_LEN];
+  char meetEnd[DATE_LEN];
+  char meetStatus[MEET_STATUS_LEN];
+  int success;
+  short cID_ind;
+  short mID_ind;
+  short meetStart_ind;
+  short meetEnd_ind;
+  short meetStatus_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_5 CURSOR FOR
+    SELECT meetingID, caseID, meetingStart, meetingEnd, meetingStatus, 1
+    FROM ms_meeting
+    WHERE caseID = :mstsCaseID
+    ORDER BY meetingID;
+
+  EXEC SQL OPEN curs_5;  
+
+  ms_meeting_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_5 INTO :mID:mID_ind, :cID:cID_ind, :meetStart:meetStart_ind, :meetEnd:meetEnd_ind, 
+          :meetStatus:meetStatus_ind, :success:success_ind;
+    retval_tuple.mID = mID;
+    retval_tuple.cID = cID;
+    strcpy(retval_tuple.meetStart, meetStart);
+    strcpy(retval_tuple.meetEnd, meetEnd);
+    strcpy(retval_tuple.meetStatus, meetStatus);
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (mID_ind == 0);
+
+  EXEC SQL CLOSE curs_5;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_5;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// return logname, caseID, and role for each case which a given logname is involved in
+//=========================================================================================
+
+void get_case_role_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_accountcaserole_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  char mstsLogname[LOG_NAME_LEN];   // declare the (input) logname variable
+  char lognam[LOG_NAME_LEN];
+  int casID;
+  char rol[ROLE_LEN];
+  int success;
+  short lognam_ind;
+  short casID_ind;
+  short rol_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  strcpy(mstsLogname, mstsLognam);
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_8 CURSOR FOR
+    SELECT logname, caseID, role, 1
+    FROM ms_accountcaserole
+    WHERE logname = :mstsLogname
+    ORDER BY caseID;
+
+  EXEC SQL OPEN curs_8;
+
+  ms_accountcaserole_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_8 INTO :lognam:lognam_ind, :casID:casID_ind, :rol:rol_ind,
+                                         :success:success_ind;
+    strcpy(retval_tuple.lognam, lognam);
+    retval_tuple.casID = casID;
+    strcpy(retval_tuple.rol, rol);
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (lognam_ind == 0);
+
+  EXEC SQL CLOSE curs_8;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_8;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// retrieve the status for a case, and the time of last status change, given the case ID
+// examine the <success> field of the returned struct for success / failure
+// which will be 0 for no such case, -1 for error, 1 for success
+//=========================================================================================
+
+ms_casestatus_tuple get_Case_Status_By_ID(int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  char casStatus[CASE_STATUS_LEN];
+  char statusDt[DATE_LEN];
+  int success;
+  short casStatus_ind;
+  short statusDt_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_casestatus_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :casStatus:casStatus_ind, :statusDt:statusDt_ind, :success:success_ind
+             FROM ms_getCaseStatusByID(:mstsCaseID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.success = success;
+    strcpy(retval.casStatus, casStatus);
+    strcpy(retval.statusDt, statusDt);
+  } else {
+    strcpy(retval.casStatus, "");
+    strcpy(retval.statusDt, "");
+    retval.success = 0;
+  }
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  strcpy(retval.casStatus, "");
+  strcpy(retval.statusDt, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// retrieve the title for a case, given the case ID
+// examine the <success> field of the returned struct for success / failure
+// which will be 0 for no such case, -1 for error, 1 for success
+//=========================================================================================
+
+ms_casetitle_tuple get_Case_Title_By_ID(int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  char casTitl[CASE_TITLE_LEN];
+  int success;
+  short casTitl_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_casetitle_tuple retval;  
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :casTitl:casTitl_ind, :success:success_ind
+             FROM ms_getCaseTitleByID(:mstsCaseID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.success = success;
+    strcpy(retval.casTitl, casTitl);
+  }
+  else
+    strcpy(retval.casTitl, "");
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  strcpy(retval.casTitl, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// get logname and docID for each person with access to a given document
+//=========================================================================================
+
+void get_doc_access_list_by_doc_ID(int mstsDID, void(*sendTuple)(ms_docaccess_tuple))
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;            // DECLARE the (input) doc ID variable
+  int dID;
+  char lognam[LOG_NAME_LEN]; 
+  int success;
+  short dID_ind;
+  short lognam_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_11 CURSOR FOR
+    SELECT docID, logname, 1
+    FROM ms_docaccess
+    WHERE docID = :mstsDocID
+    ORDER BY logname;
+
+  EXEC SQL OPEN curs_11;
+
+  ms_docaccess_tuple retval; 
+
+  // Branch to the notfound label when the "No data found" condition occurs.
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_11 INTO :dID:dID_ind, :lognam:lognam_ind, :success:success_ind;
+    retval.dID = dID;
+    strcpy(retval.lognam, lognam);
+    retval.success = success;
+
+    sendTuple(retval);
+
+  } while (dID_ind == 0);
+
+  EXEC SQL CLOSE curs_11;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_11;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// return logname and docID for each document to which a given user has access
+//=========================================================================================
+
+void get_doc_access_list_by_logname(const char *mstsLognam, void(*sendTuple)(ms_docaccess_tuple))
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognam;            // DECLARE the (input) logname variable
+  int dID;
+  char lognam[LOG_NAME_LEN]; 
+  int success;
+  short dID_ind;
+  short lognam_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_12 CURSOR FOR
+    SELECT docID, logname, 1
+    FROM ms_docaccess
+    WHERE logname = :mstsLogname
+    ORDER BY docID;
+
+  EXEC SQL OPEN curs_12;
+
+  ms_docaccess_tuple retval; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_12 INTO :dID:dID_ind, :lognam:lognam_ind, :success:success_ind;
+    retval.dID = dID;
+    strcpy(retval.lognam, lognam);
+    retval.success = success;
+
+    sendTuple(retval);
+
+  } while (lognam_ind == 0);
+
+  EXEC SQL CLOSE curs_12;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_12;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// get meeting ID / doc ID pair associated with a given meeting ID
+// returns a struct with success field set to:
+//         1 for success
+//        -1 for system error
+//        -2 for no such meeting ID
+//=========================================================================================
+
+ms_meetingdocpair_tuple get_doc_ID_by_meeting_ID(int mstsMeetID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;            // DECLARE the (input) meeting ID variable
+  int meetID;
+  int dID;
+  int success;
+  short meetID_ind;
+  short dID_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_meetingdocpair_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :meetID:meetID_ind, :dID:dID_ind, :success:success_ind
+             FROM ms_getDocIDByMeetingID(:mstsMeetingID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.meetID = meetID;
+    retval.dID = dID;
+  }
+
+  retval.success = success;
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.success = -1;
+  return retval;
+}
+
+
+//=========================================================================================
+// get doc ids of Preliminary and Final Agreements associated with a given case ID
+// returns a struct with success field set to:
+//         1 for success
+//        -1 for system error
+//        -2 for no such case ID
+//        -3 for no Preliminary Agreement on file
+//        -4 for no Final Agreement on file
+//=========================================================================================
+
+ms_initialfinaldocid_tuple get_initial_and_final_doc_ID(int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) meeting ID variable
+  int cID;
+  int initDID;
+  int initVer;
+  int finDID;
+  int finVer;
+  int success;
+  short cID_ind;
+  short initDID_ind;
+  short initVer_ind;
+  short finDID_ind;
+  short finVer_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_initialfinaldocid_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :cID:cID_ind, :initDID:initDID_ind, :initVer:initVer_ind, :finDID:finDID_ind, 
+                  :finVer:finVer_ind, :success:success_ind
+             FROM ms_getInitialAndFinalDocID(:mstsCaseID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.cID = cID;
+    retval.initDID = initDID;
+    retval.initVer = initVer;
+    retval.finDID = finDID;
+    retval.finVer = finVer;
+  }
+
+  retval.success = success;
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.success = -1;
+  return retval;
+}
+
+
+//=========================================================================================
+// get logname, lastname, firstname, role, email
+// of each person involved in a given case
+//=========================================================================================
+
+void get_involved_in_case(int mstsCID, void(*sendTuple)(ms_involvedincase_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;            // DECLARE the (input) case ID variable
+  char lognm[LOG_NAME_LEN]; 
+  char lastnm[LAST_NAME_LEN];
+  char firstnm[FIRST_NAME_LEN];
+  char rol[ROLE_LEN];
+  char emal[EMAIL_ADDR_LEN];
+  int success;
+  short lognm_ind;
+  short lastnm_ind;
+  short firstnm_ind;
+  short rol_ind;
+  short emal_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_1 CURSOR FOR
+    SELECT ACR.logname, A.lastname, A.firstname, ACR.role, A.email, 1
+    FROM ms_account A, ms_accountCaseRole ACR
+    WHERE ACR.caseID = :mstsCaseID AND
+          ACR.logname = A.logname;
+
+  EXEC SQL OPEN curs_1;
+
+  ms_involvedincase_tuple retval_tuple; 
+
+
+  // Branch to the notfound label when the "No data found" condition occurs.
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_1 INTO :lognm:lognm_ind, :lastnm:lastnm_ind, :firstnm:firstnm_ind,
+                                      :rol:rol_ind, :emal:emal_ind, :success:success_ind;
+    strcpy(retval_tuple.lognm, lognm);
+    strcpy(retval_tuple.lastnm, lastnm);
+    strcpy(retval_tuple.firstnm, firstnm);
+    strcpy(retval_tuple.rol, rol);
+    strcpy(retval_tuple.emal, emal);
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (lognm_ind == 0);
+
+  EXEC SQL CLOSE curs_1;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_1;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// retrieve the meeting data, given the meeting ID
+// examine the <success> field of the returned struct for success / failure
+// which will be 0 for no such meeting, -1 for error, 1 for success
+//=========================================================================================
+
+ms_meeting_tuple get_meeting(int mstsMID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int meetID = mstsMID;            // DECLARE the (input) meeting ID variable
+  int casID;
+  char meetStart[DATE_LEN];
+  char meetEnd[DATE_LEN];
+  char meetStatus[MEET_STATUS_LEN];
+  int success;
+  short meetID_ind;
+  short casID_ind;
+  short meetStart_ind;
+  short meetEnd_ind;
+  short meetStatus_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_meeting_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :meetID:meetID_ind, :casID:casID_ind, :meetStart:meetStart_ind, :meetEnd:meetEnd_ind,
+                  :meetStatus:meetStatus_ind, :success:success_ind
+             FROM ms_getMeeting(:meetID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.mID = meetID;
+    retval.cID = casID;
+    strcpy(retval.meetStart, meetStart);
+    strcpy(retval.meetEnd, meetEnd);
+    strcpy(retval.meetStatus, meetStatus);
+    retval.success = success;
+  } else {
+    retval.mID = 0;
+    retval.cID = 0;
+    strcpy(retval.meetStart, "");
+    strcpy(retval.meetEnd, "");
+    strcpy(retval.meetStatus, "");
+    retval.success = 0;
+  }
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.mID = 0;
+  retval.cID = 0;
+  strcpy(retval.meetStart, "");
+  strcpy(retval.meetEnd, "");
+  strcpy(retval.meetStatus, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//==================================================================
+// get messageID, recipient, sender, subject, time sent, and read (y/n)
+// for each message belonging to a given recipient
+//==================================================================
+
+void get_message_received_list(const char *mstsRecip, void(*sendTuple)(ms_messagereceivedlist_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsRecipient = mstsRecip;            // DECLARE the (input) recipient variable
+  int mID;
+  int cID;
+  char recip[LOG_NAME_LEN];
+  char sendr[LOG_NAME_LEN];
+  char subj[MESSAGE_SUBJECT_LEN];
+  char timsent[DATE_LEN];
+  char red;
+  int success;
+  short mID_ind;
+  short cID_ind;
+  short recip_ind;
+  short sendr_ind;
+  short subj_ind;
+  short timsent_ind;
+  short red_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_7 CURSOR FOR
+
+    SELECT S.messageID, S.caseID, R.recipient, S.sender, S.subject, S.timesent, R.read , 1
+    FROM ms_messageSent S, ms_messageRecipient R
+    WHERE R.recipient = :mstsRecipient AND
+          S.messageID = R.messageID
+    ORDER BY S.timesent;
+
+  EXEC SQL OPEN curs_7;  
+
+  ms_messagereceivedlist_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_7 INTO :mID:mID_ind, :cID:cID_ind, :recip:recip_ind, :sendr:sendr_ind, :subj:subj_ind, 
+          :timsent:timsent_ind, :red:red_ind, :success:success_ind;
+    retval_tuple.messID = mID;
+    retval_tuple.cID = cID;
+    strcpy(retval_tuple.recip, recip);
+    strcpy(retval_tuple.sendr, sendr);
+
+    if (subj_ind < 0)
+      strcpy(retval_tuple.subj, "NULL");
+    else
+      strcpy(retval_tuple.subj, subj);
+
+    strcpy(retval_tuple.timsent, timsent);
+    retval_tuple.red = red;
+    retval_tuple.success = success;
+
+    sendTuple(retval_tuple);
+
+  } while (mID_ind == 0);
+
+  EXEC SQL CLOSE curs_7;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_7;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//==========================================================================
+// get messageID, recipient, sender, time sent, subject, read (y/n),
+// and time read for each message sent by a given sender
+//==========================================================================
+
+void get_message_sent_recipient_list(const char *mstsSendr, void(*sendTuple)(ms_messagesentrecipient_tuple))
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsSender = mstsSendr;     // declare the input variable
+  int messID;
+  int cID;
+  int messID_2;  // input for inner query
+  char recip[LOG_NAME_LEN];
+  char sendr[LOG_NAME_LEN];
+  char timsent[DATE_LEN];
+  char subj[MESSAGE_SUBJECT_LEN];
+  char red;
+  char timread[DATE_LEN];
+  int success;
+  short messID_ind;
+  short cID_ind;
+  short recip_ind;
+  short sendr_ind;
+  short timsent_ind;
+  short subj_ind;
+  short red_ind;
+  short timread_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  int keep_going = 0;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER SQLERROR DO disconnect_from_postgresql();
+
+  EXEC SQL DECLARE curs_10 CURSOR FOR
+    SELECT messageID, caseID, sender, subject, timesent, 1
+    FROM ms_messageSent
+    WHERE sender = :mstsSender
+    ORDER BY timesent DESC;
+
+  EXEC SQL DECLARE curs_9 CURSOR FOR
+    SELECT messageID, recipient, read, timeread, 1
+    FROM ms_messageRecipient
+    WHERE messageID = :messID_2
+    ORDER BY recipient;
+
+  EXEC SQL OPEN curs_10;  
+
+  ms_messagesentrecipient_tuple retval_tuple; 
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do {            // for each message
+FETCH_10:
+    keep_going = 0;
+    EXEC SQL FETCH NEXT FROM curs_10 INTO :messID:messID_ind, :cID:cID_ind, :sendr:sendr_ind, :subj:subj_ind, 
+          :timsent:timsent_ind, :success:success_ind;
+    keep_going = 1;		// we got another message
+
+    retval_tuple.messID = messID;
+    retval_tuple.cID = cID;
+    strcpy(retval_tuple.sendr, sendr);
+
+    if (subj_ind < 0)
+      strcpy(retval_tuple.subj, "NULL");
+    else
+      strcpy(retval_tuple.subj, subj);
+
+    strcpy(retval_tuple.timsent, timsent);
+    retval_tuple.red = red;
+    retval_tuple.success = success;
+
+    messID_2 = messID;
+ 
+    if (retval_tuple.success == 1 && success_ind >= 0) {
+
+      EXEC SQL OPEN curs_9;
+ 
+      do {        // for each recipient of this message
+        EXEC SQL FETCH NEXT FROM curs_9 INTO :messID:messID_ind, :recip:recip_ind, :red:red_ind,
+               :timread:timread_ind, :success:success_ind; 
+
+        strcpy(retval_tuple.recip, recip);
+        retval_tuple.red = red;
+        
+        if (timread_ind < 0)
+          strcpy(retval_tuple.timread, "NULL");
+        else
+          strcpy(retval_tuple.timread, timread);
+ 
+        retval_tuple.success = success;
+
+        sendTuple(retval_tuple);
+      } while (recip_ind == 0);
+
+      EXEC SQL CLOSE curs_9;
+
+    }  // end if
+
+  } while (messID_ind == 0);
+
+  EXEC SQL CLOSE curs_10;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  if (keep_going) {   // we finished recipients for this message, but there may be more messages
+    EXEC SQL CLOSE curs_9;
+    goto FETCH_10;    // so 'loop'
+  } else {            // no more messages, no more recipients
+    EXEC SQL CLOSE curs_10;
+
+    disconnect_from_postgresql();
+    return;
+  }
+}
+
+
+//=========================================================================================
+// given a log name and a case ID, return the role of that person in that case
+//=========================================================================================
+
+ms_getrole_tuple get_role(const char *mstsLognm, int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  char rol[ROLE_LEN]; 
+  int success;
+  short rol_ind; 
+  short success_ind;
+  const char *mstsLogname = mstsLognm;
+  int mstsCaseID = mstsCID;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_getrole_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :rol:rol_ind, :success:success_ind
+    FROM ms_getRole(:mstsLogname, :mstsCaseID);
+
+  disconnect_from_postgresql();
+  
+  retval.success = success;
+  if (retval.success == 1)
+    strcpy(retval.rol, rol);
+  else
+    strcpy(retval.rol, "");
+
+  return retval;  // 1 for success, 0 for no such tuple
+
+notfound:
+  disconnect_from_postgresql_error();
+  strcpy(retval.rol, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// get list of signatures for a given doc ID and version
+//=========================================================================================
+
+void get_signature_list_by_doc_ID_version(int mstsDID, int mstsVersn, void(*sendTuple)(ms_signature_tuple))
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;            // DECLARE the (input) doc ID variable
+  int mstsVersion = mstsVersn;        // DECLARE the (input) doc version variable
+  int dID;
+  int versn;
+  char signr[LOG_NAME_LEN]; 
+  char signdt[DATE_LEN];
+  char signplc[SIGN_PLACE_LEN];
+  int success;
+  short dID_ind;
+  short versn_ind;
+  short signr_ind;
+  short signdt_ind;
+  short signplc_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_13 CURSOR FOR
+    SELECT docID, version, logname, sigdate, sigplace, 1
+    FROM ms_docsignature
+    WHERE docID = :mstsDocID AND
+          version = :mstsVersion
+    ORDER BY logname, sigdate;
+
+  EXEC SQL OPEN curs_13;
+
+  ms_signature_tuple retval; 
+
+  // Branch to the notfound label when the "No data found" condition occurs.
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_13 INTO :dID:dID_ind, :versn:versn_ind, :signr:signr_ind, :signdt:signdt_ind, 
+	:signplc:signplc_ind, :success:success_ind;
+    retval.dID = dID;
+    retval.versn = versn;
+    strcpy(retval.signr, signr);
+    strcpy(retval.signdt, signdt);
+    strcpy(retval.signplc, signplc);
+    retval.success = success;
+
+    sendTuple(retval);
+
+  } while (dID_ind == 0);
+
+  EXEC SQL CLOSE curs_13;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_13;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// get list of versions of a given doc signed by given logname
+//=========================================================================================
+
+void get_signed_version_list(const char *mstsLognam, int mstsDID, void(*sendTuple)(ms_signature_tuple))
+{
+EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognam;  // DECLARE the (input) logname variable
+  int mstsDocID = mstsDID;               // DECLARE the (input) doc ID variable
+  char signr[LOG_NAME_LEN]; 
+  int dID;
+  int versn;
+  char signdt[DATE_LEN];
+  char signplc[SIGN_PLACE_LEN];
+  int success;
+  short signr_ind;
+  short dID_ind;
+  short versn_ind;
+  short signdt_ind;
+  short signplc_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL DECLARE curs_14 CURSOR FOR
+    SELECT docID, version, logname, sigdate, sigplace, 1
+    FROM ms_docsignature
+    WHERE logname = :mstsLogname AND
+	  docID = :mstsDocID
+    ORDER BY docID, version;
+
+  EXEC SQL OPEN curs_14;
+
+  ms_signature_tuple retval; 
+
+  // Branch to the notfound label when the "No data found" condition occurs.
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do { 
+    EXEC SQL FETCH NEXT FROM curs_14 INTO :dID:dID_ind, :versn:versn_ind, :signr:signr_ind, :signdt:signdt_ind, 
+	:signplc:signplc_ind, :success:success_ind;
+    retval.dID = dID;
+    retval.versn = versn;
+    strcpy(retval.signr, signr);
+    strcpy(retval.signdt, signdt);
+    strcpy(retval.signplc, signplc);
+    retval.success = success;
+
+    sendTuple(retval);
+
+  } while (signr_ind == 0);
+
+  EXEC SQL CLOSE curs_14;
+
+  disconnect_from_postgresql();
+
+  return;
+
+notfound:
+  EXEC SQL CLOSE curs_14;
+
+  disconnect_from_postgresql();
+
+  return;
+}
+
+
+//=========================================================================================
+// retrieve a message received
+// examine the <success> field of the returned struct for success / failure
+// which will be 1 for success, -1 for system error, -2 for bad message ID,
+//               -3 for logname not a recipient of message
+//=========================================================================================
+ 
+ms_messagereceived_tuple read_message_received(int mstsMessID, const char *mstsReadr)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMessageID = mstsMessID;           // DECLARE the (input) message ID variable
+  const char *mstsReader = mstsReadr;       // DECLARE the (input) log name variable
+  int messID;
+  int cID;
+  char recip[LOG_NAME_LEN];                              
+  char sendr[LOG_NAME_LEN];
+  char subj[MESSAGE_SUBJECT_LEN];
+  char bod[MESSAGE_BODY_LEN];                            
+  char timsent[DATE_LEN];
+  char red;
+  int success;
+  short messID_ind;
+  short cID_ind;
+  short recip_ind;
+  short sendr_ind;
+  short subj_ind;
+  short bod_ind;
+  short timsent_ind;
+  short red_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_messagereceived_tuple retval;      
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :messID:messID_ind, :cID:cID_ind, :recip:recip_ind, :sendr:sendr_ind, :subj:subj_ind, :bod:bod_ind,
+                  :timsent:timsent_ind, :red:red_ind, :success:success_ind
+             FROM ms_readMessageReceived(:mstsMessageID, :mstsReader);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.messID = messID;
+    retval.cID = cID;
+    strcpy(retval.recip, recip);
+    strcpy(retval.sendr, sendr);
+    strcpy(retval.subj, subj);
+    strcpy(retval.timsent, timsent);
+    retval.red = red;
+
+    if (bod_ind < 0)              // body may be null
+      strcpy(retval.bod, "NULL");
+    else
+      strcpy(retval.bod, bod);
+
+    retval.success = success;     // 1 for success, < 0 for error
+  } else if (success < 0) {
+    retval.messID = 0;
+    retval.cID = 0;
+    strcpy(retval.recip, "");
+    strcpy(retval.sendr, "");
+    strcpy(retval.bod, "");
+    strcpy(retval.subj, "");
+    strcpy(retval.timsent, "");
+    retval.red = '\0';
+    retval.success = success;
+  }	
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.messID = 0;
+  retval.cID = 0;
+  strcpy(retval.recip, "");
+  strcpy(retval.sendr, "");
+  strcpy(retval.bod, "");
+  strcpy(retval.subj, "");
+  strcpy(retval.timsent, "");
+  retval.red = '\0';
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// retrieve a message sent
+// examine the <success> field of the returned struct for success / failure
+// which will be 1 for success, -1 for system error, -2 for bad message ID,
+//               -3 for logname not sender of message
+//=========================================================================================
+ 
+ms_messagesent_tuple read_message_sent(int mstsMessID, const char *mstsReadr)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMessageID = mstsMessID;           // DECLARE the (input) message ID variable
+  const char *mstsReader = mstsReadr;       // DECLARE the (input) log name variable
+  int messID;
+  int cID;
+  char sendr[LOG_NAME_LEN];
+  char bod[MESSAGE_BODY_LEN];                            
+  int success;
+  short messID_ind;
+  short cID_ind;
+  short sendr_ind;
+  short bod_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_messagesent_tuple retval;      
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :messID:messID_ind, :cID:cID_ind, :sendr:sendr_ind, :bod:bod_ind, :success:success_ind
+             FROM ms_readMessageSent(:mstsMessageID, :mstsReader);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.messID = messID;
+    retval.cID = cID;
+    strcpy(retval.sendr, sendr);
+
+    if (bod_ind < 0)              // body may be null
+      strcpy(retval.bod, "NULL");
+    else
+      strcpy(retval.bod, bod);
+
+    retval.success = success;     // 1 for success, < 0 for error
+  } else if (success < 0) {
+    retval.messID = 0;
+    retval.cID = 0;
+    strcpy(retval.sendr, "");
+    strcpy(retval.bod, "");
+    retval.success = success;
+  }	
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.messID = 0;
+  retval.cID = 0;
+  strcpy(retval.sendr, "");
+  strcpy(retval.bod, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// given a logname, retrieve the account data for that individual
+//=========================================================================================
+
+ms_account_tuple retrieve_account(const char *mstsLognm)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognm;
+  char lastnm[LAST_NAME_LEN];
+  char firstnm[FIRST_NAME_LEN];
+  char midinit;
+  char homephn[PHONE_NUMBER_LEN];
+  char workphn[PHONE_NUMBER_LEN];
+  char cellphn[PHONE_NUMBER_LEN];
+  char eml[EMAIL_ADDR_LEN];
+  int success;
+  short lastnm_ind;
+  short firstnm_ind;
+  short midinit_ind;
+  short homephn_ind;
+  short workphn_ind;
+  short cellphn_ind;
+  short eml_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_account_tuple retval;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+ 
+  EXEC SQL
+    SELECT * INTO :lastnm:lastnm_ind, :firstnm:firstnm_ind, :midinit:midinit_ind, :homephn:homephn_ind, :workphn:workphn_ind, 
+                  :cellphn:cellphn_ind, :eml:eml_ind, :success:success_ind
+             FROM ms_retrieveAccount(:mstsLogname);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    strcpy(retval.lastnm, lastnm);
+    strcpy(retval.firstnm, firstnm);
+    if (midinit_ind < 0)
+      retval.midinit = '%';
+    else 
+      retval.midinit = midinit;
+    if (homephn_ind < 0)
+      strcpy(retval.homephn, "NULL");
+    else
+      strcpy(retval.homephn, homephn);
+    if (workphn_ind < 0)
+      strcpy(retval.workphn, "NULL");
+    else
+      strcpy(retval.workphn, workphn);
+    if (cellphn_ind < 0)
+      strcpy(retval.cellphn, "NULL");
+    else
+      strcpy(retval.cellphn, cellphn);
+    strcpy(retval.eml, eml);
+    retval.success = success;
+  } else {
+    strcpy(retval.lastnm, "");
+    strcpy(retval.firstnm, "");
+    retval.midinit = '\0';
+    strcpy(retval.homephn, "");
+    strcpy(retval.workphn, "");
+    strcpy(retval.cellphn, "");
+    strcpy(retval.eml, "");
+    retval.success = 0;
+  }
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  strcpy(retval.lastnm, "");
+  strcpy(retval.firstnm, "");
+  retval.midinit = '\0';
+  strcpy(retval.homephn, "");
+  strcpy(retval.workphn, "");
+  strcpy(retval.cellphn, "");
+  strcpy(retval.eml, "");
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// retrieve most recent version of doc as editable
+// examine the <success> field of the returned struct for success / failure
+// which will be 0 for doc is already out, -1 for error, 1 for success
+//=========================================================================================
+ 
+ms_docversion_tuple retrieve_doc_for_edit(int mstsDID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;                    // DECLARE the (input) doc ID variable
+  int dID;                              
+  int versn;                            
+  char dtcreated[DATE_LEN];
+  char titl[DOC_TITLE_LEN];
+  char bod[DOC_BODY_LEN];
+  char editble;
+  int success;
+  short dID_ind;
+  short versn_ind;
+  short dtcreated_ind;
+  short titl_ind;
+  short bod_ind;
+  short editble_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_docversion_tuple retval;      
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  EXEC SQL
+    SELECT * INTO :dID:dID_ind, :versn:versn_ind, :dtcreated:dtcreated_ind, :titl:titl_ind, :bod:bod_ind,
+                  :editble:editble_ind, :success:success_ind
+             FROM ms_retrieveDocForEdit(:mstsDocID);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.dID = dID;
+    retval.versn = versn;
+
+    strcpy(retval.dtcreated, dtcreated);
+    strcpy(retval.titl, titl);
+
+    if (bod_ind < 0)              // body may be null
+      strcpy(retval.bod, "NULL");
+    else
+      strcpy(retval.bod, bod);
+
+    retval.editble = editble;
+
+    retval.success = success;     // 1 for success, 0 for doc already out, -1 for error
+  } else if (success == 0) {
+    retval.dID = dID;
+    retval.versn = 0;
+    strcpy(retval.dtcreated, "");
+    strcpy(retval.titl, "");
+    strcpy(retval.bod, "");
+    retval.editble = '\0';
+    retval.success = 0;
+  }
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.dID = mstsDID;
+  retval.versn = 0;
+  strcpy(retval.dtcreated, "");
+  strcpy(retval.titl, "");
+  strcpy(retval.bod, "");
+  retval.editble = '\0';
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// if mstsVersn == 0, retrieve most recent version of doc for read only 
+// otherwise, retrieve specified version for read only 
+// examine the <success> field of the returned struct for success / failure
+// which will be 0 for no such doc, -1 for error, 1 for success
+//=========================================================================================
+
+ms_docversion_tuple retrieve_doc_read_only(int mstsDID, int mstsVersn)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;                    // DECLARE the (input) doc ID variable
+  int mstsVersion = mstsVersn;                // DECLARE the (input) version number variable
+  int dID;
+  int versn;
+  char dtcreated[DATE_LEN];
+  char titl[DOC_TITLE_LEN];
+  char bod[DOC_BODY_LEN];
+  char editble;
+  int success;
+  short dID_ind;
+  short versn_ind;
+  short dtcreated_ind;
+  short titl_ind;
+  short bod_ind;
+  short editble_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_docversion_tuple retval; 
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT * INTO :dID:dID_ind, :versn:versn_ind, :dtcreated:dtcreated_ind, :titl:titl_ind, :bod:bod_ind,
+                  :editble:editble_ind, :success:success_ind
+             FROM ms_retrieveDocReadOnly(:mstsDocID, :mstsVersion);    
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.dID = dID;
+    retval.versn = versn;
+
+    strcpy(retval.dtcreated, dtcreated);
+    strcpy(retval.titl, titl);
+
+    if (bod_ind < 0)              // body may be null
+      strcpy(retval.bod, "NULL");
+    else
+      strcpy(retval.bod, bod);
+
+    retval.editble = editble;
+    retval.success = success;     // 1 for success, 0 for doc already out, -1 for error 
+  } else if (success == 0) {
+    retval.dID = dID;
+    retval.versn = 0;
+    strcpy(retval.dtcreated, "");
+    strcpy(retval.titl, "");
+    strcpy(retval.bod, "");
+    retval.editble = '\0';
+    retval.success = 0;
+  }
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.dID = mstsDID;
+  retval.versn = 0;
+  strcpy(retval.dtcreated, "");
+  strcpy(retval.titl, "");
+  strcpy(retval.bod, "");
+  retval.editble = '\0';
+  retval.success = -1;
+
+  return retval;
+}
+
+
+//=========================================================================================
+// given a case number, retrieve the inital and final doc for that case
+// returns: 1 for success
+//         -1 for system error
+//         -2 for not on file
+//=========================================================================================
+
+ms_initialfinaldoc_tuple retrieve_initial_and_final(int mstsCaseNum)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseNumber = mstsCaseNum;     // the (input) case number argument
+  int cNum;
+  char initAgr[AGREEMENT_LEN];
+  char finAgr[AGREEMENT_LEN];
+  int success;
+  short cNum_ind;
+  short initAgr_ind;
+  short finAgr_ind;
+  short success_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  ms_initialfinaldoc_tuple retval;
+
+  connect_to_postgresql();
+
+  /* Branch to the notfound label when the
+     1403 ("No data found") condition occurs. */
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+ 
+  EXEC SQL
+    SELECT * INTO :cNum:cNum_ind, :initAgr:initAgr_ind, :finAgr:finAgr_ind, :success:success_ind
+             FROM ms_retrieveInitialAndFinal(:mstsCaseNumber);
+
+  disconnect_from_postgresql();
+
+  if (success == 1) {
+    retval.cNum = cNum;
+    strcpy(retval.initAgr, initAgr);
+    strcpy(retval.finAgr, finAgr);
+  }
+  retval.success = success;
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+
+  retval.success = -1;
+
+  return retval;
+}

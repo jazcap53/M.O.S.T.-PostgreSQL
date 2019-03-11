@@ -1,0 +1,66 @@
+/*
+ *  File: callProcsViaC.pgc
+ *  Modified: 6/1/2008  10:15p
+ *
+ *  make connection to postgresql
+ *  commit; break connection to postgresql
+ *  rollback; break connection to postgresql
+ */
+
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+// Include the SQL Communications Area
+#include <sqlca.h>
+
+#include "callProcsViaC.h"
+
+
+#define ECPG_LOG "/home/andrew/website/logs/ecpg_debug.log"
+
+extern FILE *fp;
+
+pthread_mutex_t global_db_mutex;
+
+
+void connect_to_postgresql()
+{
+  if ((fp = fopen(ECPG_LOG, "a+")) == NULL) {
+    fprintf(stderr, "cant open ecpg_debug.log\n");
+    exit(1);
+  }
+  ECPGdebug(1, fp);
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *username = "andrew";
+  const char *password = "test";
+  const char *target = "most";
+  EXEC SQL END DECLARE SECTION;
+
+  EXEC SQL WHENEVER SQLERROR SQLPRINT;
+
+  EXEC SQL CONNECT TO :target USER :username;
+}  
+
+
+void disconnect_from_postgresql()
+{
+  EXEC SQL COMMIT;
+  EXEC SQL DISCONNECT;
+
+  ECPGdebug(0, fp);
+  fclose(fp);
+}
+
+
+void disconnect_from_postgresql_error()
+{
+  EXEC SQL ROLLBACK;
+  EXEC SQL DISCONNECT;
+
+  ECPGdebug(0, fp);
+  close(fp);
+}

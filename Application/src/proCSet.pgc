@@ -1,0 +1,1024 @@
+// file: proCSet.pgc
+// modified: 6/1/2008  11:15p
+
+
+//==================================================================
+// FUNCTION LIST
+//    int add_available(const char *mstsLgnam, int mstsCasID, const char *mstsAvlStart,
+//        const char *mstsAvlEnd)
+//    int add_message(const char *mstsLgnam, int, const char *mstsSubj, const char *mstsBod)
+//    int add_message_recipient(int mstsMessID, const char *mstsRecip)
+//    int delete_account(const char *mstsLognam)
+//    int delete_attendance(int mstsMeetID, const char *mstsLognam)
+//    int delete_available(const char *mstsLgnam, int mstsCasID, const char *mstsAvlStart,
+//        const char *mstsAvlEnd)
+//    int delete_case(int mstsCID)
+//    ms_littleaccount_tuple new_account(const char *mstsNewLstNam, const char *mstsNewFrstNam,
+//                           const char *mstsNewEmailAddr)
+//    int new_account_case_role(const char *mstsLognm, int mstsCasID, const char *mstsRol)
+//    int new_attendance(int mstsMeetID, const char *mstsLognam)
+//    int new_case(const char *mstsNewT)
+//    int new_doc_access(int mstsDID, const char *mstsLognm)
+//    int new_doc_signature(int mstsDID, int mstsVersn, const char *mstsLognm, const char *mstsSigPlac)
+//    int new_document(const char *mstsTyp, const char *mstsTtl, const char *mstsBod, int mstsCasID)
+//    int new_doc_version(int mstsDID, const char *mstsBod)
+//    int new_meeting(int mstsCasID, const char *mstsStartTim, const char *mstsEndTim)
+//    int return_document(int mstsDID)
+//    int store_initial_and_final(int mstsCaseNum, const char *mstsInitialAgr, const char *mstsFinalAgr)
+//    int store_meeting_document_pair(int mstsMeetID, int mstsDID)
+//    int update_account_info(const char *mstsLognam, const char *mstsLastNam, const char *mstsFirstNam, char mstsMidInit,
+//        const char *mstsHomePhn, const char *mstsWorkPhn, const char *mstsCellPhn, const char *mstsEmal)
+//    int update_attendance_yn(int mstsMeetID, const char *mstsLognam, char yn)
+//    int update_case_state(int mstsCID, const char *mstsNewCasStat)
+//    int update_meeting_status(int mstsMeetID, const char *mstsMeetStatus)
+//==================================================================    
+
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <pthread.h>
+
+#include "callProcsViaC.h"
+
+
+extern FILE *fp;
+extern pthread_mutex_t global_db_mutex;
+
+
+//=============================================================================================
+// add an availability
+// returns: 2 for successful insert, with extension of existing tuples 
+//          1 for successful insert
+//          -1 if system error
+//          -2 if start time is later than end time
+//          -3 if logname is not associated with this case
+//=============================================================================================
+
+int add_available(const char *mstsLgnam, int mstsCasID, const char *mstsAvlStart,
+  const char *mstsAvlEnd)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+
+  const char *mstsLogname = mstsLgnam;
+  int mstsCaseID = mstsCasID;
+  const char *mstsAvailStart = mstsAvlStart;
+  const char *mstsAvailEnd = mstsAvlEnd;
+  int mstsAddAvailableSuccessful = 0;
+
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_addAvailable(:mstsLogname, :mstsCaseID, :mstsAvailStart, :mstsAvailEnd)
+    INTO :mstsAddAvailableSuccessful;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return mstsAddAvailableSuccessful;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1; 
+}
+
+
+//=============================================================================================
+// add a message
+// either subject or body or both may be "NULL"
+// returns: new message ID if successful
+//          -1 for system error
+//=============================================================================================
+
+int add_message(const char *mstsLgnam, int mstsCasID, const char *mstsSubj, const char *mstsBod)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLgnam;
+  int mstsCaseID = mstsCasID;
+  const char * mstsSubject = mstsSubj;
+  const char *mstsBody = mstsBod;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_addMessage(:mstsLogname, :mstsCaseID, :mstsSubject, :mstsBody)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// add a message recipient
+// returns: 1 if successful
+//          -1 for system error
+//          -2 for bad message ID
+//          -3 for no such recipient
+//          -4 for message already received
+//=============================================================================================
+
+int add_message_recipient(int mstsMessID, const char *mstsRecip)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMessageID = mstsMessID;
+  const char * mstsRecipient = mstsRecip;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_addMessageRecipient(:mstsMessageID, :mstsRecipient)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;
+}
+
+
+//=============================================================================================
+// delete an account
+// returns: 1 for success
+//          -1 for system error
+//          -5 for no such account
+//=============================================================================================
+
+int delete_account(const char *mstsLognam)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognam;
+  int success;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_deleteAccount(:mstsLogname)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  if (success == 1)
+    return 1;
+  else if (success == 0)
+    return -5;
+  else
+    return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;
+}
+
+
+//=============================================================================================
+// delete an attendance
+// returns: 1 for success
+//          0 for no such attendance
+//          -1 for system error
+//          -2 for no such meeting
+//=============================================================================================
+
+int delete_attendance(int mstsMeetID, const char *mstsLognam)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;
+  const char *mstsLogname = mstsLognam;
+  int success;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_deleteAttendance(:mstsMeetingID, :mstsLogname)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;  
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// delete an availability
+// returns: 1 for deleted successfully
+//          0 for nothing found to delete
+//          -1 for system error
+//          -2 for end time before start time
+// note: removes availabilities < 15 minutes
+//=============================================================================================
+
+int delete_available(const char *mstsLgnam, int mstsCasID, const char *mstsAvlStart,
+  const char *mstsAvlEnd)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+
+  const char *mstsLogname = mstsLgnam;
+  int mstsCaseID = mstsCasID;
+  const char *mstsAvailStart = mstsAvlStart;
+  const char *mstsAvailEnd = mstsAvlEnd;
+  int mstsDeleteAvailableSuccessful = 0;
+
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_deleteAvailable(:mstsLogname, :mstsCaseID, :mstsAvailStart, :mstsAvailEnd)
+    INTO :mstsDeleteAvailableSuccessful;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return mstsDeleteAvailableSuccessful;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   /* return error */
+}
+
+
+//=========================================================================================
+// delete a case
+//=========================================================================================
+
+int delete_case(int mstsCID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;
+  int retval;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL SELECT ms_deleteCase(:mstsCaseID)
+  INTO :retval;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql();
+
+  return -1;
+}
+
+
+//=========================================================================================
+// delete all logs in / out, given a login name
+//=========================================================================================
+
+int delete_loginout(const char *mstsLognm)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognm;
+  int retval;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL SELECT ms_deleteLoginout(:mstsLogname)
+  INTO :retval;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return retval;
+
+notfound:
+  disconnect_from_postgresql();
+
+  return -1;
+}
+
+
+//=============================================================================================
+// create a new user account
+// set logname to 1st initial, 1st 5 letters of last name, and the first available integer
+//     from 01 to 99
+// returns a struct with a lognam field holding the new logname
+//     success field holding 1 for success
+//                           99 for no available integers in range
+//                           -1 for other error
+//=============================================================================================
+
+ms_littleaccount_tuple new_account(const char *mstsNewLstNam, const char *mstsNewFrstNam,
+  const char *mstsNewEmailAddr)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+
+  char mstsNewLogname[LOG_NAME_LEN];
+  const char *mstsNewLastName = mstsNewLstNam;
+  const char *mstsNewFirstName = mstsNewFrstNam;
+  const char *mstsNewEmailAddress = mstsNewEmailAddr;
+  int available;
+  char lognam[LOG_NAME_LEN];
+  int success;              
+  short available_ind;
+  short lognam_ind;
+  short success_ind;
+
+  EXEC SQL END DECLARE SECTION;
+
+  int i;
+  int ordinal = 1;
+  ms_littleaccount_tuple retval;
+  char lastNamePrefix[LAST_NAME_PREFIX_LEN + 1];
+  char passwordStem[LAST_NAME_PREFIX_LEN + 2];
+
+  memset(passwordStem, '\0', LAST_NAME_PREFIX_LEN + 2);
+  passwordStem[0] = mstsNewFirstName[0];                // get first initial
+  strncat(passwordStem, mstsNewLastName, LAST_NAME_PREFIX_LEN);  // cat on first letters of last name
+  passwordStem[strlen(passwordStem)] = '\0';            // shouldn't be necessary, but... 
+
+  for (i = 0; i < strlen(passwordStem); ++i)
+    passwordStem[i] = tolower(passwordStem[i]);
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  do {                                                  // if jsmith01 is taken, try jsmith02...
+      memset(mstsNewLogname, '\0', LOG_NAME_LEN);
+      sprintf(mstsNewLogname, "%s%02d", passwordStem, ordinal++); 
+
+      EXEC SQL
+        SELECT * INTO :available:available_ind     
+        FROM ms_lognameFree(:mstsNewLogname);
+
+  } while (available == 0 && available_ind == 0 && ordinal < 100);
+
+  if (available_ind != 0) {                             
+    strcpy(retval.lognam, "");
+    retval.success = -1;
+    disconnect_from_postgresql_error();
+    return retval;
+  }    
+  
+  if (ordinal == 100) {                                 // jsmith## used up through jsmith99
+    strcpy(retval.lognam, "");
+    retval.success = -99;
+    disconnect_from_postgresql_error();
+    return retval;
+  } 
+
+  /* CRITICAL REGION */                                 // create new account
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL                                         
+    SELECT * INTO :lognam:lognam_ind, :success:success_ind
+    FROM ms_newAccount(:mstsNewLogname, :mstsNewLastName, :mstsNewFirstName, :mstsNewEmailAddress);
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  strcpy(retval.lognam, lognam);
+  retval.success = success;
+  return retval;
+
+notfound:
+  disconnect_from_postgresql_error();
+  strcpy(retval.lognam, "");
+  return retval;
+}
+
+
+//=============================================================================================
+// link an account and a case with a role
+// returns 1 for success, -1 otherwise
+//=============================================================================================
+
+int new_account_case_role(const char *mstsLognm, int mstsCasID, const char *mstsRol)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognm;
+  int mstsCaseID = mstsCasID;
+  const char *mstsRole = mstsRol;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newAccountCaseRole(:mstsLogname, :mstsCaseID, :mstsRole)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// create a new attendance, i.e. associate a logname with a meeting ID
+// returns: 1 for success
+//          -1 for system error
+//          -2 for logname is not available during meeting time
+//          -3 for logname is not involved in case associated with this meeting
+//=============================================================================================
+
+int new_attendance(int mstsMeetID, const char *mstsLognam)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;
+  const char *mstsLogname = mstsLognam;
+  int success;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newAttendance(:mstsMeetingID, :mstsLogname)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;  
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// create a new case
+// returns new caseID or -1 for error
+//=============================================================================================
+
+int new_case(const char *mstsNewT)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsNewCaseTitle = mstsNewT;
+  int mstsNewCaseID = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newCase(:mstsNewCaseTitle)
+    INTO :mstsNewCaseID;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  if (mstsNewCaseID == -1)
+    disconnect_from_postgresql_error();   // rollback 
+  else
+    disconnect_from_postgresql();
+
+  return mstsNewCaseID;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// give a logname access to a document
+// returns: 1 for AOK
+//          -1 for error
+//=============================================================================================
+
+int new_doc_access(int mstsDID, const char *mstsLognm)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognm;
+  int mstsDocID = mstsDID;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newDocAccess(:mstsDocID, :mstsLogname)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// record the signing of a version of a document by a participant
+// returns 1 for success
+//         0 for doc version already signed by logname
+//        -1 for sys error
+//        -2 for no such document
+//        -3 for no such version
+//        -4 for logname does not have access to this document
+//=============================================================================================
+
+int new_doc_signature(int mstsDID, int mstsVersn, const char *mstsLognm, const char *mstsSigPlac)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;
+  int mstsVersion = mstsVersn;
+  const char *mstsLogname = mstsLognm;
+  const char *mstsSigPlace = mstsSigPlac;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newDocSignature(:mstsDocID, :mstsVersion, :mstsLogname, :mstsSigPlace)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// creates entries in BOTH the ms_document and ms_docVersion tables
+// returns new docID if successful, else -1
+//=============================================================================================
+
+int new_document(const char *mstsTyp, const char *mstsTtl, const char *mstsBod, int mstsCasID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsType = mstsTyp;
+  const char *mstsTitle = mstsTtl;
+  const char *mstsBody = mstsBod;
+  int mstsCaseID = mstsCasID;
+  int mstsNewDocID = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newDocument(:mstsType, :mstsTitle, :mstsBody, :mstsCaseID)
+    INTO :mstsNewDocID;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return mstsNewDocID;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// insert new entry int ms_docVersion
+// called by new_document, and directly;
+// returns new version number for success, else -1
+//=============================================================================================
+
+int new_doc_version(int mstsDID, const char *mstsBod)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;
+  const char *mstsBody = mstsBod;
+  int mstsNewVersionNumber = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newDocVersion(:mstsDocID, :mstsBody)
+    INTO :mstsNewVersionNumber;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return mstsNewVersionNumber;  
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// create a new meeting
+// returns new meetingID or -1 for error
+//=============================================================================================
+
+int new_meeting(int mstsCasID, const char *mstsStartTim, const char *mstsEndTim)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCasID;
+  const char *mstsStartTime = mstsStartTim;
+  const char *mstsEndTime = mstsEndTim;
+  int mstsNewMeetingID = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_newMeeting(:mstsCaseID, :mstsStartTime, :mstsEndTime)
+    INTO :mstsNewMeetingID;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return mstsNewMeetingID;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1; 
+}
+
+
+//=============================================================================================
+// return a document after it has been out for edit
+// returns: 1 for AOK
+//          0 for doc not out
+//          -1 for error
+//=============================================================================================
+
+int return_document(int mstsDID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsDocID = mstsDID;
+  int success;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_returnDocument(:mstsDocID)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;  
+}
+
+
+//=============================================================================================
+// store the initial and final agreements for a case number, prior to destroying intermediate docs
+// returns 1 for success
+//        -1 for system error 
+//        -2 for already agreements of file with that case number
+//        -3 for no such case
+//        -4 for case not resolved
+//=============================================================================================
+
+int store_initial_and_final(int mstsCaseNum, const char *mstsInitialAgr, const char *mstsFinalAgr)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseNumber = mstsCaseNum;
+  const char *mstsInitialAgreement = mstsInitialAgr;
+  const char *mstsFinalAgreement = mstsFinalAgr;
+  int retval;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_storeInitialAndFinal(:mstsCaseNumber, :mstsInitialAgreement, :mstsFinalAgreement)
+    INTO :retval;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return retval; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// create a new messageID / docID pair
+// returns 1 for success, -1 for system error, -2 for no such meetingID, -3 for no such docID
+//=============================================================================================
+
+int store_meeting_document_pair(int mstsMeetID, int mstsDID)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;
+  int mstsDocID = mstsDID;
+  int retval;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_storeMeetingDocumentPair(:mstsMeetingID, :mstsDocID)
+    INTO :retval;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return retval; 
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// update account info
+// set the middleinitial, homephone, workphone, cellphone fields of an ms_account record
+// returns: 1 for AOK
+//          -1 for error
+//=============================================================================================
+
+int update_account_info(const char *mstsLognam, const char *mstsLastNam, const char *mstsFirstNam, char mstsMidInit,
+                        const char *mstsHomePhn, const char *mstsWorkPhn, const char *mstsCellPhn, const char *mstsEmal)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  const char *mstsLogname = mstsLognam;
+  const char *mstsLastName = mstsLastNam;
+  const char *mstsFirstName = mstsFirstNam;
+  char mstsMiddleInitial = mstsMidInit;
+  const char *mstsHomePhone = mstsHomePhn;
+  const char *mstsWorkPhone = mstsWorkPhn;
+  const char *mstsCellPhone = mstsCellPhn;
+  const char *mstsEmail = mstsEmal;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_updateAccountInfo(:mstsLogname, :mstsLastName, :mstsFirstName, :mstsMiddleInitial, :mstsHomePhone, :mstsWorkPhone,
+                                :mstsCellPhone, :mstsEmail)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// update whether a person showed up at a meeting they were scheduled to attend
+// returns: 1 for success
+//          0 for person was not scheduled to attend
+//          -1 for system error
+//          -2 for bad value for attendance (not y or n)
+//          -3 for no such meeting
+//=============================================================================================
+
+int update_attendance_yn(int mstsMeetID, const char *mstsLognam, char yn)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;
+  const char *mstsLogname = mstsLognam;
+  char mstsYesNo = yn;
+  int success = 0;
+  short mstsYesNo_ind;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  if (yn == '\0')
+    mstsYesNo_ind = -1;
+  else
+    mstsYesNo_ind = 0;
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_updateAttendanceYN(:mstsMeetingID, :mstsLogname, :mstsYesNo:mstsYesNo_ind)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// update status for a case
+// returns: 1 for AOK
+//          -1 for error
+//=============================================================================================
+
+int update_case_state(int mstsCID, const char *mstsNewCasStat)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsCaseID = mstsCID;
+  const char *mstsNewCaseStatus = mstsNewCasStat;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_updateCaseState(:mstsCaseID, :mstsNewCaseStatus)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
+//=============================================================================================
+// update status for a meeting
+// returns: 1 for success
+//          0 for no such meeting or meeting cancelled
+//          -1 for system error
+//          -2 for bad value for status
+//=============================================================================================
+
+int update_meeting_status(int mstsMeetID, const char *mstsMeetStatus)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+  int mstsMeetingID = mstsMeetID;
+  const char *mstsMeetingStatus = mstsMeetStatus;
+  int success = 0;
+  EXEC SQL END DECLARE SECTION;
+
+  connect_to_postgresql();
+
+  EXEC SQL WHENEVER NOT FOUND GOTO notfound;
+
+  /* CRITICAL REGION */
+  pthread_mutex_lock(&global_db_mutex);
+  EXEC SQL
+    SELECT ms_updateMeetingStatus(:mstsMeetingID, :mstsMeetingStatus)
+    INTO :success;
+  pthread_mutex_unlock(&global_db_mutex);
+  /* END CRITICAL REGION */
+
+  disconnect_from_postgresql();
+
+  return success;
+
+notfound:
+  disconnect_from_postgresql_error();
+  return -1;   
+}
+
+
